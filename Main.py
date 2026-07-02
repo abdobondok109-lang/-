@@ -62,7 +62,7 @@ elif choice == "Add Product":
         qty = st.number_input("Quantity", min_value=0, step=1)
         price = st.number_input("Price ($)", min_value=0.0, step=0.25)
         cat = st.text_input("Category (Optional)")
-        submit = st.form_submit_input("Save Product")
+        submit = st.form_submit_button("Save Product")
         
         if submit:
             if name.strip() == "":
