@@ -4,81 +4,95 @@ import sqlite3
 from datetime import datetime
 import urllib.parse
 
-# 1. Page Configuration
-st.set_page_config(page_title="نظام إدارة المستودع والجرد الذكي", layout="wide")
+# 1. Page Configuration & Professional RTL Styling
+st.set_page_config(page_title="تطبيق المخزن - المحاسب المحترف", layout="wide")
 
-# Custom CSS for Professional RTL & UI Look
 st.markdown("""
 <style>
     [data-testid="stSidebar"] {display: none;}
     [data-testid="stSidebarNav"] {display: none;}
     body {direction: rtl; text-align: right;}
-    div.stButton > button {width: 100%; font-weight: bold; background-color: #1E3A8A; color: white; border-radius: 8px;}
-    div.stButton > button:hover {background-color: #3B82F6; color: white;}
-    .stTabs [data-baseweb="tab"] {font-size: 16px; font-weight: bold;}
-    .report-box {padding: 15px; border-radius: 8px; background-color: #F3F4F6; border-right: 5px solid #10B981; margin-bottom: 10px;}
-    .warning-box {padding: 15px; border-radius: 8px; background-color: #FEF3C7; border-right: 5px solid #D97706; margin-bottom: 10px;}
+    div.stButton > button {width: 100%; font-weight: bold; background-color: #0F172A; color: white; border-radius: 8px; padding: 10px;}
+    div.stButton > button:hover {background-color: #2563EB; color: white;}
+    .stTabs [data-baseweb="tab"] {font-size: 16px; font-weight: bold; color: #1E293B;}
+    .card {padding: 15px; border-radius: 8px; background-color: #F8FAFC; border-right: 5px solid #3B82F6; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);}
+    .card-success {border-right-color: #10B981;}
+    .card-danger {border-right-color: #EF4444;}
 </style>
 """, unsafe_allow_html=True)
 
-DB_FILE = "advanced_erp_storage.db"
-OWNER_PIN = "1234" # يمكنك تغيير الرقم السري الخاص بك من هنا
+DB_FILE = "el_makhzan_pro.db"
 
-# 2. Database Setup
+# 2. Database Initialization
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # Inventory
+    
+    # 1. Inventory table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS inventory (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_name TEXT NOT NULL,
+        product_name TEXT UNIQUE NOT NULL,
         total_received INTEGER DEFAULT 0,
         current_stock INTEGER DEFAULT 0,
         cost_price REAL NOT NULL,
         sell_price REAL DEFAULT 0,
-        category TEXT,
         last_updated TEXT
     )""")
-    # Purchase Invoices
+    
+    # 2. Suppliers accounts table
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS purchase_invoices (
+    CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        supplier_name TEXT UNIQUE NOT NULL,
+        total_purchases REAL DEFAULT 0,
+        total_paid REAL DEFAULT 0,
+        total_due REAL DEFAULT 0
+    )""")
+    
+    # 3. Purchase invoices / payments history
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS purchase_ledgers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         supplier_name TEXT NOT NULL,
-        product_name TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        cost_price REAL NOT NULL,
-        total_cost REAL NOT NULL,
+        product_name TEXT,
+        quantity INTEGER DEFAULT 0,
+        cost_price REAL DEFAULT 0,
         amount_paid REAL DEFAULT 0,
         amount_due REAL DEFAULT 0,
-        invoice_date TEXT
+        transaction_type TEXT NOT NULL, -- 'فاتورة مشتريات' أو 'سداد دفعة'
+        tx_date TEXT
     )""")
-    # Daily Cash & Revenues
+    
+    # 4. Cash box / Revenues
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS daily_revenue (
+    CREATE TABLE IF NOT EXISTS cash_box (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         amount REAL NOT NULL,
+        statement TEXT,
         record_date TEXT
     )""")
-    # Expenses
+    
+    # 5. Categorized Expenses
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        expense_type TEXT NOT NULL,
+        category TEXT NOT NULL,
         amount REAL NOT NULL,
         notes TEXT,
         expense_date TEXT
     )""")
-    # Audit Logs
+    
+    # 6. Saved Audit Sessions (History)
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS audit_logs (
+    CREATE TABLE IF NOT EXISTS audit_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         audit_date TEXT,
-        total_cost_value REAL,
-        actual_cash_received REAL,
+        cost_of_goods_sold REAL,
+        cash_in_box REAL,
         total_expenses REAL,
-        total_paid_suppliers REAL,
-        total_due_suppliers REAL,
+        suppliers_paid REAL,
+        suppliers_due REAL,
         net_profit REAL,
         details TEXT
     )""")
@@ -87,298 +101,277 @@ def init_db():
 
 init_db()
 
-# Session State for Ghost Mode
-if "show_profit_tab" not in st.session_state:
-    st.session_state.show_profit_tab = True
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+# Application Title
+st.title("📦 تطبيق المخزن الرقمي المتكامل")
+st.write("النسخة الاحترافية المدمجة لإدارة المخازن، كشوف الموردين، وجلسات جرد الأرباح الفعلية.")
 
-# 3. Main Title
-st.title("💼 نظام المستودع الذكي وإدارة الجرد المتقدم")
-st.write("نظام متكامل يعتمد على الجرد الدوري لاستنتاج المبيعات والأرباح دون الحاجة لكاشير يومي.")
-
-# Ghost mode activation via secret input
-secret_trigger = st.text_input("البحث العام في النظام / رمز التفعيل السري", type="password", help="اكتب الكود السري هنا لإعادة إظهار صفحة الأرباح المخفية")
-if secret_trigger == OWNER_PIN:
-    st.session_state.show_profit_tab = True
-
-# Define available tabs
-all_tabs = ["📦 المشتريات والموردين", "💸 الخزينة والمصاريف", "🔍 البحث والتعديلات", "🧮 إجراء جرد جديد", "📊 الأرباح وسجلات الجرد الخفية"]
-if not st.session_state.show_profit_tab:
-    all_tabs.remove("📊 الأرباح وسجلات الجرد الخفية")
-
-tabs = st.tabs(all_tabs)
+# App Tabs (Free Navigation - No Passwords)
+tabs = st.tabs([
+    "🛒 الفواتير والموردين", 
+    "💸 الخزينة والمصروفات", 
+    "🔍 دليل ومخزون المواد", 
+    "🧮 جلسة الجرد والربح الحقيقي", 
+    "📊 التقارير والأرشيف التاريخي"
+])
 
 # ==================== TAB 1: PURCHASES & SUPPLIERS ====================
 with tabs[0]:
-    st.subheader("🛒 تسجيل بضاعة واردة (فاتورة شراء)")
+    st.subheader("🏬 نظام حسابات الموردين والفواتير")
     
-    p_conn = sqlite3.connect(DB_FILE)
-    existing_prods = pd.read_sql_query("SELECT DISTINCT product_name FROM inventory", p_conn)['product_name'].tolist()
-    p_conn.close()
+    col_sup1, col_sup2 = st.columns(2)
     
-    with st.form("purchase_form", clear_on_submit=True):
-        sup_name = st.text_input("اسم المورد / الشركة")
+    with col_sup1:
+        st.markdown('<div class="card">📌 تسجيل فاتورة مشتريات واردة</div>', unsafe_allow_html=True)
+        conn = sqlite3.connect(DB_FILE)
+        existing_prods = pd.read_sql_query("SELECT product_name FROM inventory", conn)['product_name'].tolist()
+        conn.close()
         
-        prod_type = st.radio("نوع المنتج", ["منتج مسجل سابقاً", "منتج جديد تماماً"], horizontal=True)
-        if prod_type == "منتج مسجل سابقاً" and existing_prods:
-            p_name = st.selectbox("اختر المنتج من القائمة", existing_prods)
-        else:
-            p_name = st.text_input("اسم المنتج الجديد")
+        with st.form("invoice_form", clear_on_submit=True):
+            sup_name = st.text_input("اسم المورد / الشركة").strip()
             
-        p_qty = st.number_input("الكمية المشتراة", min_value=1, step=1)
-        p_cost = st.number_input("سعر الشراء للقطعة (ج.م)", min_value=0.0, step=1.0)
-        p_sell = st.number_input("سعر البيع المقترح للقطعة (ج.م) - اختياري", min_value=0.0, step=1.0, value=0.0)
-        
-        p_paid = st.number_input("المبلغ المدفوع للمورد حالياً (ج.م)", min_value=0.0, step=10.0)
-        p_date = st.date_input("تاريخ الفاتورة").strftime("%Y-%m-%d")
-        
-        submit_purchase = st.form_submit_button("حفظ فاتورة الشراء وتحديث المستودع")
-        
-        if submit_purchase and p_name and sup_name:
-            total_c = p_qty * p_cost
-            due_c = total_c - p_paid
-            
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("""INSERT INTO purchase_invoices (supplier_name, product_name, quantity, cost_price, total_cost, amount_paid, amount_due, invoice_date)
-                         VALUES (?,?,?,?,?,?,?,?)""", (sup_name, p_name, p_qty, p_cost, total_c, p_paid, due_c, p_date))
-            
-            c.execute("SELECT id, total_received, current_stock FROM inventory WHERE product_name = ?", (p_name,))
-            row = c.fetchone()
-            if row:
-                new_total = row[1] + p_qty
-                new_stock = row[2] + p_qty
-                if p_sell > 0:
-                    c.execute("UPDATE inventory SET total_received=?, current_stock=?, cost_price=?, sell_price=?, last_updated=? WHERE id=?",
-                              (new_total, new_stock, p_cost, p_sell, p_date, row[0]))
-                else:
-                    c.execute("UPDATE inventory SET total_received=?, current_stock=?, cost_price=?, last_updated=? WHERE id=?",
-                              (new_total, new_stock, p_cost, p_date, row[0]))
+            p_type = st.radio("صنف المنتج", ["منتج مسجل سابقاً", "منتج جديد"], horizontal=True)
+            if p_type == "منتج مسجل سابقاً" and existing_prods:
+                p_name = st.selectbox("اختر الصنف", existing_prods)
             else:
-                c.execute("INSERT INTO inventory (product_name, total_received, current_stock, cost_price, sell_price, last_updated) VALUES (?,?,?,?,?,?)",
-                          (p_name, p_qty, p_qty, p_cost, p_sell, p_date))
+                p_name = st.text_input("اسم الصنف الجديد")
                 
-            conn.commit()
-            conn.close()
-            st.success(f"تم تسجيل الفاتورة بنجاح وتحديث المخزن لـ {p_name}!")
+            qty = st.number_input("الكمية الواردة", min_value=1, step=1)
+            cost = st.number_input("سعر الشراء للوحدة (ج.م)", min_value=0.0, step=1.0)
+            sell_p = st.number_input("سعر البيع المقترح للوحدة (ج.م)", min_value=0.0, step=1.0)
+            paid = st.number_input("المبلغ المدفوع كاش من الفاتورة (ج.م)", min_value=0.0, step=10.0)
+            tx_date = st.date_input("تاريخ الفاتورة").strftime("%Y-%m-%d")
             
-            wa_text = f"📄 *فاتورة شراء من: {sup_name}*\n📅 التاريخ: {p_date}\n📦 المنتج: {p_name}\n🔢 الكمية: {p_qty}\n💰 سعر الشراء: {p_cost} ج.م\n💵 الإجمالي: {total_c} ج.م\n💳 المدفوع: {p_paid} ج.م\n🔴 المتبقي (آجل): {due_c} ج.م"
-            encoded_text = urllib.parse.quote(wa_text)
-            wa_url = f"https://api.whatsapp.com/send?text={encoded_text}"
-            st.markdown(f'<a href="{wa_url}" target="_blank"><button style="background-color:#25D366;color:white;padding:10px;border:none;border-radius:5px;width:100%;font-weight:bold;cursor:pointer;">📲 مشاركة الفاتورة عبر الواتساب</button></a>', unsafe_allow_html=True)
+            submit_inv = st.form_submit_button("إصدار الفاتورة وتحديث الحسابات")
+            
+            if submit_inv and sup_name and p_name:
+                total_cost = qty * cost
+                due = total_cost - paid
+                
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                
+                # Update Supplier Summary Table
+                c.execute("INSERT OR IGNORE INTO suppliers (supplier_name) VALUES (?)", (sup_name,))
+                c.execute("""UPDATE suppliers SET total_purchases = total_purchases + ?, total_paid = total_paid + ?, total_due = total_due + ? 
+                             WHERE supplier_name = ?""", (total_cost, paid, due, sup_name))
+                
+                # Log to history ledger
+                c.execute("""INSERT INTO purchase_ledgers (supplier_name, product_name, quantity, cost_price, amount_paid, amount_due, transaction_type, tx_date)
+                             VALUES (?, ?, ?, ?, ?, ?, 'فاتورة مشتريات', ?)""", (sup_name, p_name, qty, cost, paid, due, tx_date))
+                
+                # Update Inventory stock
+                c.execute("INSERT OR IGNORE INTO inventory (product_name, cost_price, sell_price) VALUES (?, ?, ?)", (p_name, cost, sell_p))
+                c.execute("""UPDATE inventory SET total_received = total_received + ?, current_stock = current_stock + ?, cost_price = ?, sell_price = ?, last_updated = ?
+                             WHERE product_name = ?""", (qty, qty, cost, sell_p, tx_date, p_name))
+                
+                conn.commit()
+                conn.close()
+                st.success(f"✔️ تم حفظ الفاتورة بنجاح وتحديث حساب المورد {sup_name}")
+                
+    with col_sup2:
+        st.markdown('<div class="card">💳 سند صرف / سداد دفعة نقدية لمورد</div>', unsafe_allow_html=True)
+        conn = sqlite3.connect(DB_FILE)
+        sups_list = pd.read_sql_query("SELECT supplier_name FROM suppliers", conn)['supplier_name'].tolist()
+        conn.close()
+        
+        with st.form("payment_form", clear_on_submit=True):
+            chosen_sup = st.selectbox("اختر المورد المستلم", sups_list if sups_list else ["لا يوجد موردين حالياً"])
+            pay_amount = st.number_input("المبلغ المدفوع (ج.م)", min_value=0.0, step=50.0)
+            pay_date = st.date_input("تاريخ السداد").strftime("%Y-%m-%d")
+            submit_pay = st.form_submit_button("تسجيل السند المالي")
+            
+            if submit_pay and chosen_sup in sups_list and pay_amount > 0:
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("""UPDATE suppliers SET total_paid = total_paid + ?, total_due = total_due - ? 
+                             WHERE supplier_name = ?""", (pay_amount, pay_amount, chosen_sup))
+                c.execute("""INSERT INTO purchase_ledgers (supplier_name, amount_paid, amount_due, transaction_type, tx_date)
+                             VALUES (?, ?, ?, 'سداد دفعة', ?)""", (chosen_sup, pay_amount, -pay_amount, pay_date))
+                conn.commit()
+                conn.close()
+                st.success(f"💵 تم إثبات السند النقدي بقيمة {pay_amount} ج.م للمورد {chosen_sup}")
+
+    # Display Supplier Account Ledgers Table
+    st.markdown("---")
+    st.subheader("📑 كشف حساب أرصدة الموردين الإجمالي")
+    conn = sqlite3.connect(DB_FILE)
+    sups_df = pd.read_sql_query("SELECT supplier_name AS 'اسم المورد', total_purchases AS 'إجمالي المشتريات', total_paid AS 'إجمالي المدفوع نقداً', total_due AS 'الآجل المتبقي (عليك)' FROM suppliers", conn)
+    conn.close()
+    st.dataframe(sups_df, use_container_width=True)
 
 # ==================== TAB 2: CASH & EXPENSES ====================
 with tabs[1]:
-    col1, col2 = st.columns(2)
+    st.subheader("💸 إدارة الصندوق اليومي والمصاريف المبوبّة")
+    col_c1, col_c2 = st.columns(2)
     
-    with col1:
-        st.subheader("💰 خزينة نهاية اليوم (الأموال الواردة)")
-        with st.form("revenue_form", clear_on_submit=True):
-            rev_amount = st.number_input("إجمالي المبلغ الوارد اليومي (ج.م)", min_value=0.0, step=50.0)
-            rev_date = st.date_input("تاريخ التحصيل", key="rev_date").strftime("%Y-%m-%d")
-            submit_rev = st.form_submit_button("تسجيل الإيراد المالي في الخزنة")
-            if submit_rev and rev_amount > 0:
+    with col_c1:
+        st.markdown('<div class="card-success" style="padding:15px; background:#F0FDF4; border-right:5px solid #10B981; border-radius:8px;">💰 حركة إيداع كاش بالخزينة (مبيعات/رأس مال)</div>', unsafe_allow_html=True)
+        with st.form("cash_form", clear_on_submit=True):
+            cash_amt = st.number_input("قيمة المبلغ الوارد (ج.م)", min_value=0.0, step=50.0)
+            cash_stmt = st.text_input("البيان / الشرح (مثال: مبيعات يومية، إيداع شخصي)")
+            cash_date = st.date_input("تاريخ الإيداع").strftime("%Y-%m-%d")
+            submit_cash = st.form_submit_button("تأكيد الإيداع في الخزنة")
+            
+            if submit_cash and cash_amt > 0:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                c.execute("INSERT INTO daily_revenue (amount, record_date) VALUES (?,?)", (rev_amount, rev_date))
+                c.execute("INSERT INTO cash_box (amount, statement, record_date) VALUES (?, ?, ?)", (cash_amt, cash_stmt, cash_date))
                 conn.commit()
                 conn.close()
-                st.success("تم إيداع المبلغ في سجل الخزينة بنجاح!")
+                st.success("تم إدخال الكاش وتحديث وعاء الخزينة الرئيسي.")
                 
-    with col2:
-        st.subheader("🔴 المصاريف والنفقات التشغيلية")
-        with st.form("expense_form", clear_on_submit=True):
-            exp_type = st.selectbox("نوع المصروف", ["مرتبات عمال", "صيانة وتصليح", "إيجار", "كهرباء ومياه", "مصاريف أخرى"])
-            exp_amount = st.number_input("قيمة المصروف (ج.م)", min_value=0.0, step=10.0)
-            exp_notes = st.text_area("تفاصيل وملاحظات إضافية")
-            exp_date = st.date_input("تاريخ الصرف", key="exp_date").strftime("%Y-%m-%d")
-            submit_exp = st.form_submit_button("تسجيل المصروف")
-            if submit_exp and exp_amount > 0:
+    with col_c2:
+        st.markdown('<div class="card-danger" style="padding:15px; background:#FEF2F2; border-right:5px solid #EF4444; border-radius:8px;">🔴 النفقات والمصروفات التشغيلية المبوبة</div>', unsafe_allow_html=True)
+        with st.form("exp_form", clear_on_submit=True):
+            exp_cat = st.selectbox("تبويب المصروف", ["أجور ومرتبات", "إيجار المحل", "فواتير كهرباء ومياه", "نقل وشحن بضائع", "مصاريف نثريّة وضيافة"])
+            exp_amt = st.number_input("المبلغ المنصرف (ج.م)", min_value=0.0, step=10.0)
+            exp_notes = st.text_area("ملاحظات إضافية عن الصرف")
+            exp_date = st.date_input("تاريخ المصروف").strftime("%Y-%m-%d")
+            submit_exp = st.form_submit_button("إثبات وخصم المصروف")
+            
+            if submit_exp and exp_amt > 0:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
-                c.execute("INSERT INTO expenses (expense_type, amount, notes, expense_date) VALUES (?,?)", (exp_type, exp_amount, exp_notes, exp_date))
+                c.execute("INSERT INTO expenses (category, amount, notes, expense_date) VALUES (?, ?, ?, ?)", (exp_cat, exp_amt, exp_notes, exp_date))
                 conn.commit()
                 conn.close()
-                st.success("تم تسجيل المصروف وخصمه بنجاح!")
+                st.success(f"تم إثبات مصروف '{exp_cat}' بنجاح.")
 
-# ==================== TAB 3: SEARCH & EDIT ====================
+# ==================== TAB 3: INVENTORY MASTER DATA ====================
 with tabs[2]:
-    st.subheader("🔍 محرك البحث والتعديل المتقدم")
-    
-    search_query = st.text_input("ابحث هنا (باسم المنتج، المورد، أو التاريخ)")
-    search_category = st.selectbox("اختر الجدول الذي تريد البحث فيه وتعديله", ["فاتورة مشتريات", "المستودع الحالي", "سجل الخزينة اليومي", "سجل المصاريف"])
+    st.subheader("🔍 سجل ودليل المخازن الشامل")
     
     conn = sqlite3.connect(DB_FILE)
-    if search_category == "فاتورة مشتريات":
-        df = pd.read_sql_query("SELECT * FROM purchase_invoices", conn)
-    elif search_category == "المستودع الحالي":
-        df = pd.read_sql_query("SELECT * FROM inventory", conn)
-    elif search_category == "سجل الخزينة اليومي":
-        df = pd.read_sql_query("SELECT * FROM daily_revenue", conn)
-    else:
-        df = pd.read_sql_query("SELECT * FROM expenses", conn)
+    inv_df = pd.read_sql_query("SELECT id AS 'كود الصنف', product_name AS 'اسم المنتج', total_received AS 'إجمالي الوارد التراكمي', current_stock AS 'الرصيد الفعلي الحالي', cost_price AS 'سعر الشراء (ج.م)', sell_price AS 'سعر البيع (ج.م)', last_updated AS 'آخر تحديث' FROM inventory", conn)
     conn.close()
     
-    if search_query:
-        df = df.astype(str)
-        df = df[df.apply(lambda row: row.str.contains(search_query, case=False).any(), axis=1)]
+    search_item = st.text_input("⚡ اكتب اسم المنتج للبحث السريع والتصفية...")
+    if search_item:
+        inv_df = inv_df[inv_df['اسم المنتج'].str.contains(search_item, case=False)]
         
-    st.write(f"📊 النتائج المتاحة ({len(df)} سجل):")
-    edited_df = st.data_editor(df, use_container_width=True, num_rows="dynamic", key=f"editor_{search_category}")
+    st.dataframe(inv_df, use_container_width=True)
     
-    if st.button("💾 حفظ التعديلات والتغييرات بشكل نهائي"):
-        conn = sqlite3.connect(DB_FILE)
-        if search_category == "فاتورة مشتريات":
-            edited_df.to_sql("purchase_invoices", conn, if_exists="replace", index=False)
-        elif search_category == "المستودع الحالي":
-            edited_df.to_sql("inventory", conn, if_exists="replace", index=False)
-        elif search_category == "سجل الخزينة اليومي":
-            edited_df.to_sql("daily_revenue", conn, if_exists="replace", index=False)
-        else:
-            edited_df.to_sql("expenses", conn, if_exists="replace", index=False)
-        conn.commit()
-        conn.close()
-        st.success("تم تحديث وحفظ البيانات المعدلة بنجاح!")
+    st.info("💡 لتعديل أي سعر أو تعديل كمية بالخطأ، يمكنك مراجعة الجداول وتصحيحها من قاعدة البيانات.")
 
-# ==================== TAB 4: NEW AUDIT (الجرد الجديد) ====================
+# ==================== TAB 4: AUDIT SESSION (نظام الجرد المتفق عليه) ====================
 with tabs[3]:
-    st.subheader("🧮 شاشة إجراء جرد فعلي للمستودع")
+    st.subheader("🧮 جلسة جرد المستودع واستنتاج صافي الفائض الفعلي")
+    st.write("تقوم فكرة هذه الشاشة على حساب الكميات المباعة من واقع النقص في الرفوف مضروباً في سعر الشراء، ومطابقته بالخزينة.")
     
     conn = sqlite3.connect(DB_FILE)
-    inv_data = pd.read_sql_query("SELECT id, product_name, total_received, cost_price FROM inventory", conn)
+    audit_base = pd.read_sql_query("SELECT id, product_name, total_received, cost_price FROM inventory", conn)
     
-    # Calculate current totals for suppliers invoices (Paid vs Due)
-    totals_sups = pd.read_sql_query("SELECT SUM(amount_paid), SUM(amount_due) FROM purchase_invoices", conn)
-    total_paid_sups = totals_sups.iloc[0,0] or 0.0
-    total_due_sups = totals_sups.iloc[0,1] or 0.0
+    # Financial metrics aggregation
+    total_sups_metrics = pd.read_sql_query("SELECT SUM(total_paid), SUM(total_due) FROM suppliers", conn)
+    total_paid_sups = total_sups_metrics.iloc[0,0] or 0.0
+    total_due_sups = total_sups_metrics.iloc[0,1] or 0.0
     
-    total_rev_all = pd.read_sql_query("SELECT SUM(amount) FROM daily_revenue", conn).iloc[0,0] or 0.0
-    total_exp_all = pd.read_sql_query("SELECT SUM(amount) FROM expenses", conn).iloc[0,0] or 0.0
+    total_cash_box = pd.read_sql_query("SELECT SUM(amount) FROM cash_box", conn).iloc[0,0] or 0.0
+    total_expenses_all = pd.read_sql_query("SELECT SUM(amount) FROM expenses", conn).iloc[0,0] or 0.0
     conn.close()
     
-    st.write("📝 أدخل الكميات الفردية الحالية الموجودة في المحل لتوليد التقرير الحسابي الحقيقي:")
+    st.markdown("### 📝 جدول إدخال الجرد الفعلي الفردي للأصناف:")
     
-    if "audit_input" not in st.session_state or len(st.session_state.audit_input) != len(inv_data):
-        inv_data['الكمية الفردية الفعلية بالمحل حالياً'] = inv_data['total_received']
-        st.session_state.audit_input = inv_data.copy()
+    if "audit_state_df" not in st.session_state or len(st.session_state.audit_state_df) != len(audit_base):
+        audit_base['الكمية الموجودة بالمحل فعلياً (العد اليدوي)'] = audit_base['total_received']
+        st.session_state.audit_state_df = audit_base.copy()
         
-    audit_editor = st.data_editor(st.session_state.audit_input[['id', 'product_name', 'total_received', 'cost_price', 'الكمية الفردية الفعلية بالمحل حالياً']], 
-                                  use_container_width=True, disabled=['id', 'product_name', 'total_received', 'cost_price'])
+    editable_audit = st.data_editor(
+        st.session_state.audit_state_df[['id', 'product_name', 'total_received', 'cost_price', 'الكمية الموجودة بالمحل فعلياً (العد اليدوي)']],
+        use_container_width=True,
+        disabled=['id', 'product_name', 'total_received', 'cost_price']
+    )
     
     st.markdown("---")
-    st.subheader("💼 مطابقة الجرد الختامي بالخزينة المالية الحالية")
+    actual_cash_box_input = st.number_input("💵 تأكيد مقدار الكاش والسيولة النقدية المتوفرة في الخزنة حالياً (ج.م):", value=float(total_cash_box))
     
-    actual_cash_input = st.number_input("تأكيد إجمالي الكاش الفعلي المتوفر في الخزينة حالياً (ج.م)", value=float(total_rev_all))
-    
-    if st.button("📊 تشغيل ومعالجة التقرير الختامي للجرد المستنتج"):
-        total_cost_val = 0.0
-        details_list = []
+    if st.button("📊 تشغيل ومعالجة جلسة الجرد الحالية"):
+        total_cost_sold_goods = 0.0
+        audit_details = []
         
-        for index, row in audit_editor.iterrows():
+        for idx, row in editable_audit.iterrows():
             total_in = row['total_received']
-            actual_now = row['الكمية الفردية الفعلية بالمحل حالياً']
-            sold_qty = total_in - actual_now  # الكمية المباعة المستنتجة
+            actual_now = row['الكمية الموجودة بالمحل فعلياً (العد اليدوي)']
+            sold_units = total_in - actual_now  # الكميات المستنتج بيعها
             
-            cost_p = row['cost_price']
-            item_cost = sold_qty * cost_p  # تضريب الكمية المباعة × سعر الشراء
-            total_cost_val += item_cost
+            c_price = row['cost_price']
+            calc_cost = sold_units * c_price  # الكمية المباعة × سعر الشراء
+            total_cost_sold_goods += calc_cost
             
-            details_list.append(f"المنتج: {row['product_name']} | الكمية المستنتجة المباعة: {sold_qty} قطع | تكلفة الشراء المضروبة: {item_cost:,.2f} ج.م")
+            audit_details.append(f"📦 {row['product_name']} -> المباع المستنتج: {sold_units} قطعة | تكلفة الشراء المخرجة: {calc_cost:,.2f} ج.م")
             
-        # New Financial Formula: المكسب الفعلي = الكاش - (المدفوع للموردين + الآجل للموردين + النفقات والمصاريف)
-        net_prof = actual_cash_input - (total_paid_sups + total_due_sups + total_exp_all)
+        # The Custom Formula Agreed Upon:
+        # المكسب الفعلي الصافي الفائض = الكاش الفعلي - (أموال الموردين المدفوعة + حساب الأوجل الخارجية للموردين + النفقات والمصاريف)
+        net_actual_profit = actual_cash_box_input - (total_paid_sups + total_due_sups + total_expenses_all)
         
-        st.markdown("### 📋 النتيجة الحسابية المعتمدة بناءً على تضريب سعر الشراء والخزينة:")
-        st.write(f"🔹 **إجمالي تكلفة البضاعة التي خرجت من المستودع (المباعة × سعر الشراء):** {total_cost_val:,.2f} ج.م")
-        st.write(f"🔹 **إجمالي الكاش المتوفر حالياً بالخزينة:** {actual_cash_input:,.2f} ج.م")
-        st.write(f"🔹 **إجمالي الأموال المدفوعة للموردين:** {total_paid_sups:,.2f} ج.م")
-        st.write(f"🔹 **إجمالي الآجل المتبقي (الخارجي للموردين):** {total_due_sups:,.2f} ج.م")
-        st.write(f"🔹 **إجمالي النفقات والمصاريف المخصومة:** {total_exp_all:,.2f} ج.م")
+        st.markdown("### 📋 التقرير المالي المولد للجلسة:")
+        col_m1, col_m2 = st.columns(2)
         
-        # Display Net Profit clearly
-        if net_prof >= 0:
-            st.success(f"💰 **صافي المكسب الفعلي الفائض:** {net_prof:,.2f} ج.م")
+        with col_m1:
+            st.write(f"🔹 **تكلفة البضاعة المباعة الحقيقية (الكميات × سعر الشراء):** {total_cost_sold_goods:,.2f} ج.م")
+            st.write(f"🔹 **إجمالي النقدية (الكاش) المتواجد بالخزينة:** {actual_cash_box_input:,.2f} ج.م")
+            st.write(f"🔹 **إجمالي النفقات والمصاريف المخصومة:** {total_expenses_all:,.2f} ج.م")
+            
+        with col_m2:
+            st.write(f"🔹 **إجمالي ما تم سداده للموردين نقداً:** {total_paid_sups:,.2f} ج.م")
+            st.write(f"🔹 **إجمالي حسابات الآجل المتبقية للموردين:** {total_due_sups:,.2f} ج.م")
+            
+        st.markdown("---")
+        if net_actual_profit >= 0:
+            st.success(f"💰 **صافي الفائض والمكسب الفعلي الصافي للمحل:** {net_actual_profit:,.2f} ج.م")
         else:
-            st.error(f"🚨 **عجز مالي / خسارة فعلية بالخزينة بمقدار:** {net_prof:,.2f} ج.م")
+            st.error(f"🚨 **عجز مالي أو خسارة فعلية مترتبة بالخزينة:** {net_actual_profit:,.2f} ج.م")
             
-        st.info("💡 تم حساب الأرباح والمطابقة، لاعتماد هذا الجرد وحفظه بشكل نهائي في السجلات التاريخية، يرجى إدخال الرمز السري للمالك في التبويب المخصص للأرباح.")
-        
-        st.session_state.temp_audit = {
-            "cost": total_cost_val,
-            "cash": actual_cash_input,
-            "expenses": total_exp_all,
+        # Save session temporarily in state to allow archiving
+        st.session_state.current_session_data = {
+            "cost": total_cost_sold_goods,
+            "cash": actual_cash_box_input,
+            "expenses": total_expenses_all,
             "paid_sups": total_paid_sups,
             "due_sups": total_due_sups,
-            "net": net_prof,
-            "details": "\n".join(details_list)
+            "net": net_actual_profit,
+            "details": "\n".join(audit_details),
+            "editor_data": editable_audit
         }
-
-# ==================== TAB 5: HIDDEN REVENUE & AUDIT LOGS ====================
-if st.session_state.show_profit_tab:
-    with tabs[-1]:
-        st.subheader("🔒 اللوحة السرية لإدارة الأرباح والمكاسب العليا")
         
-        if not st.session_state.authenticated:
-            pin_input = st.text_input("أدخل رمز المرور الخاص بالمالك لفتح الخزنة (PIN)", type="password")
-            if pin_input == OWNER_PIN:
-                st.session_state.authenticated = True
-                st.rerun()
-            else:
-                if pin_input: st.error("الرمز السري خاطئ! تم حجب البيانات.")
-        
-        if st.session_state.authenticated:
-            st.success("🔓 تم التحقق بنجاح. مرحباً بك يا مالك العمل.")
-            
-            hide_completely = st.checkbox("🚫 تفعيل وضع الشبح (إخفاء هذه الصفحة تماماً من القائمة الآن)")
-            if hide_completely:
-                st.session_state.show_profit_tab = False
-                st.session_state.authenticated = False
-                st.rerun()
-                
-            st.markdown("---")
-            st.subheader("📊 تقارير تحليل الأداء وصافي الأرباح الحقيقية")
-            
-            if "temp_audit" in st.session_state:
-                st.markdown('<div class="report-box">📝 يوجد جرد معلق تم تشغيله للتو، يمكنك حفظه الآن في الأرشيف الرسمي للشركة:</div>', unsafe_allow_html=True)
-                if st.button("💾 ترحيل واعتماد هذا الجرد رسمياً في السجل التاريخي"):
-                    t = st.session_state.temp_audit
-                    conn = sqlite3.connect(DB_FILE)
-                    c = conn.cursor()
-                    c.execute("""INSERT INTO audit_logs (audit_date, total_cost_value, actual_cash_received, total_expenses, total_paid_suppliers, total_due_suppliers, net_profit, details)
-                                 VALUES (?,?,?,?,?,?,?,?)""", (datetime.now().strftime("%Y-%m-%d %H:%M"), t['cost'], t['cash'], t['expenses'], t['paid_sups'], t['due_sups'], t['net'], t['details']))
-                    
-                    for index, row in st.session_state.audit_input.iterrows():
-                        c.execute("UPDATE inventory SET total_received=?, current_stock=? WHERE id=?", 
-                                  (row['الكمية الفردية الفعلية بالمحل حالياً'], row['الكمية الفردية الفعلية بالمحل حالياً'], row['id']))
-                    conn.commit()
-                    conn.close()
-                    del st.session_state.temp_audit
-                    st.success("تم ترحيل الجرد وحفظه بنجاح وتصفير الدورة المستندية لبدء فترة جديدة!")
-                    st.rerun()
-            
-            st.markdown("### 📅 سجل عمليات الجرد السابقة والأرباح المؤرشفة")
+    if "current_session_data" in st.session_state:
+        st.markdown("---")
+        if st.button("💾 ترحيل واعتماد جلسة الجرد وتصفير الدورة للمرحلة القادمة"):
+            sd = st.session_state.current_session_data
             conn = sqlite3.connect(DB_FILE)
-            audit_history_df = pd.read_sql_query("SELECT * FROM audit_logs ORDER BY id DESC", conn)
-            top_products = pd.read_sql_query("SELECT product_name AS 'المنتج', SUM(quantity) AS 'إجمالي الكمية المسحوبة من الموردين' FROM purchase_invoices GROUP BY product_name ORDER BY SUM(quantity) DESC LIMIT 5", conn)
-            conn.close()
+            c = conn.cursor()
             
-            if audit_history_df.empty:
-                st.info("لا توجد عمليات جرد مرحّلة ومحفوظة بعد.")
-            else:
-                st.dataframe(audit_history_df, use_container_width=True)
+            # Save into historical database
+            c.execute("""INSERT INTO audit_history (audit_date, cost_of_goods_sold, cash_in_box, total_expenses, suppliers_paid, suppliers_due, net_profit, details)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
+                      (datetime.now().strftime("%Y-%m-%d %H:%M"), sd['cost'], sd['cash'], sd['expenses'], sd['paid_sups'], sd['due_sups'], sd['net'], sd['details']))
+            
+            # Apply and update new inventory starting state
+            for _, r in sd['editor_data'].iterrows():
+                c.execute("UPDATE inventory SET total_received = ?, current_stock = ? WHERE id = ?", (r['الكمية الموجودة بالمحل فعلياً (العد اليدوي)'], r['الكمية الموجودة بالمحل فعلياً (العد اليدوي)'], r['id']))
                 
-                st.markdown("### 🗓️ التحليل الزمني للمكاسب (شهري وسنوي):")
-                audit_history_df['تاريخ الجرد'] = pd.to_datetime(audit_history_df['audit_date'])
-                audit_history_df['الشهر'] = audit_history_df['تاريخ الجرد'].dt.to_period('M')
-                
-                monthly_perf = audit_history_df.groupby('الشهر')[['actual_cash_received', 'net_profit']].sum()
-                st.write("إجمالي الكاش وصافي الأرباح الفعلية الفائضة مجمعة حسب الشهر:")
-                st.dataframe(monthly_perf, use_container_width=True)
-                
-            st.markdown("---")
-            st.markdown("### 🔥 تحليل المنتجات الأكثر سحباً وحركة:")
-            if top_products.empty:
-                st.info("لا توجد مبيعات أو مشتريات كافية لتوليد تحليل الأكثر مسحوباً.")
-            else:
-                st.dataframe(top_products, use_container_width=True)
+            conn.commit()
+            conn.close()
+            del st.session_state.current_session_data
+            st.success("🎯 تم ترحيل الجلسة للأرشيف بنجاح، وتثبيت أرقام المخزن الجديدة كبداية للفترة القادمة!")
+            st.rerun()
+
+# ==================== TAB 5: ARCHIVES & REPORTS ====================
+with tabs[4]:
+    st.subheader("📊 الأرشيف التاريخي والسجلات المحفوظة")
+    
+    conn = sqlite3.connect(DB_FILE)
+    history_df = pd.read_sql_query("SELECT id AS 'رقم الجلسة', audit_date AS 'تاريخ ووقت الجرد', cost_of_goods_sold AS 'تكلفة المباع', cash_in_box AS 'كاش الخزينة', total_expenses AS 'المصاريف', suppliers_paid AS 'المدفوع للموردين', suppliers_due AS 'آجل الموردين', net_profit AS 'المكسب الصافي الفعلي' FROM audit_history ORDER BY id DESC", conn)
+    conn.close()
+    
+    if history_df.empty:
+        st.info("لا توجد جلسات جرد مؤرشفة ومثبتة حتى الآن.")
+    else:
+        st.dataframe(history_df, use_container_width=True)
+        
+        # WhatsApp Report Exporting
+        st.markdown("### 📲 مشاركة التقرير الأخير عبر واتساب")
+        last_row = history_df.iloc[0]
+        report_msg = f"📊 *تقرير جرد تطبيق المخزن*\n📅 التاريخ: {last_row['تاريخ ووقت الجرد']}\n💵 كاش الخزينة الفعلي: {last_row['كاش الخزينة']} ج.م\n📉 إجمالي المصاريف: {last_row['المصاريف']} ج.م\n🏬 آجل الموردين: {last_row['آجل الموردين']} ج.م\n💰 *صافي المكسب الفعلي الفائض: {last_row['المكسب الصافي الفعلي']} ج.م*"
+        encoded_msg = urllib.parse.quote(report_msg)
+        st.markdown(f'<a href="https://api.whatsapp.com/send?text={encoded_msg}" target="_blank"><button style="background-color:#25D366;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;width:100%;">📲 إرسال التقرير الختامي للواتساب</button></a>', unsafe_allow_html=True)
