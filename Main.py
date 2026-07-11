@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 import urllib.parse
 
 # 1. إعدادات الواجهة الاحترافية والدعم الكامل للغة العربية (RTL)
-st.set_page_config(page_title="تطبيق المخزن المتكامل", layout="wide")
+st.set_page_config(page_title="تطبيق المخزن السحابي", layout="wide")
 
 st.markdown("""
 <style>
@@ -20,82 +20,45 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-DB_NAME = "makhzan_ultra_v4.db"
+st.title("📦 نظام إدارة المخزن السحابي المتكامل")
+st.write("تم ربط هذا التطبيق بحساب جوجل شيت لضمان عدم ضياع أي بيانات عند الاستخدام من الهاتف.")
 
-# 2. تأسيس قاعدة البيانات والجداول المحاسبية الجديدة
-def init_database():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    # المخزون
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS inventory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_name TEXT UNIQUE NOT NULL,
-        stock_qty INTEGER DEFAULT 0,
-        cost_price REAL DEFAULT 0
-    )""")
-    
-    # الفواتير
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_num TEXT NOT NULL,
-        product_name TEXT NOT NULL,
-        qty_added INTEGER NOT NULL,
-        cost_price REAL NOT NULL,
-        total_cost REAL NOT NULL,
-        invoice_date TEXT NOT NULL
-    )""")
-    
-    # الأموال الواردة
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS incoming_funds (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        amount REAL NOT NULL,
-        source_details TEXT,
-        fund_date TEXT NOT NULL
-    )""")
-    
-    # الآواجل الخارجية
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS credit_accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_name TEXT NOT NULL,
-        initial_credit REAL DEFAULT 0,
-        final_credit REAL DEFAULT 0,
-        record_date TEXT NOT NULL
-    )""")
-    
-    # المصروفات
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS expenses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        amount REAL NOT NULL,
-        notes TEXT,
-        expense_date TEXT NOT NULL
-    )""")
-    
-    # أرشيف الجرد
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS audit_archive (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        audit_date TEXT NOT NULL,
-        cost_of_sold REAL NOT NULL,
-        cash_counted REAL NOT NULL,
-        credit_diff REAL NOT NULL,
-        period_expenses REAL NOT NULL,
-        net_profit REAL NOT NULL,
-        log_details TEXT
-    )""")
-    
-    conn.commit()
-    conn.close()
+# إنشاء الاتصال بجوجل شيت
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error("⚠️ يرجى ضبط إعدادات الاتصال بجوجل شيت (Secrets) في لوحة تحكم Streamlit Cloud ليتمكن التطبيق من حفظ البيانات.")
+    st.stop()
 
-init_database()
+# دالة مساعدة لقراءة الجداول من جوجل شيت بـ تنظيف البيانات
+def load_sheet_data(worksheet_name, columns):
+    try:
+        df = conn.read(worksheet=worksheet_name, ttl=0)
+        if df.empty:
+            return pd.DataFrame(columns=columns)
+        return df
+    except:
+        return pd.DataFrame(columns=columns)
 
-st.title("📦 نظام إدارة المخزن والمالية المتكامل")
-st.write("نظام محاسبي باللغة العربية مخصص لمتابعة الوارد، الكاش الفعلي، الآواجل، والجرد الدوري.")
+# دالة مساعدة لتحديث الجداول في جوجل شيت
+def save_sheet_data(df, worksheet_name):
+    conn.update(worksheet=worksheet_name, data=df)
+    st.cache_data.clear()
+
+# تحميل البيانات سحابياً من جوجل شيت فوراً عند فتح التطبيق
+inventory_cols = ['id', 'product_name', 'stock_qty', 'cost_price']
+invoices_cols = ['invoice_num', 'product_name', 'qty_added', 'cost_price', 'total_cost', 'invoice_date']
+funds_cols = ['id', 'amount', 'source_details', 'fund_date']
+credits_cols = ['id', 'customer_name', 'initial_credit', 'final_credit', 'record_date']
+expenses_cols = ['id', 'amount', 'notes', 'expense_date']
+archive_cols = ['id', 'audit_date', 'cost_of_sold', 'cash_counted', 'credit_diff', 'period_expenses', 'net_profit', 'log_details']
+
+inventory_df = load_sheet_data("inventory", inventory_cols)
+invoices_df = load_sheet_data("invoices", invoices_cols)
+funds_df = load_sheet_data("incoming_funds", funds_cols)
+credits_df = load_sheet_data("credit_accounts", credits_cols)
+expenses_df = load_sheet_data("expenses", expenses_cols)
+archive_df = load_sheet_data("audit_archive", archive_cols)
 
 # إنشاء السبع صفحات المطلوبة بدقة
 tabs = st.tabs([
@@ -110,19 +73,11 @@ tabs = st.tabs([
 
 # ==================== 1️⃣ صفحة الوارد (السجلات التاريخية) ====================
 with tabs[0]:
-    st.subheader("📋 كشف الوارد التاريخي الشامل")
-    conn = sqlite3.connect(DB_NAME)
-    all_invoices_df = pd.read_sql_query("""
-        SELECT invoice_num AS 'رقم الفاتورة', product_name AS 'اسم الصنف', qty_added AS 'الالكمية الواردة', 
-               cost_price AS 'سعر الشراء للوحدة', total_cost AS 'إجمالي التكلفة', invoice_date AS 'تاريخ الفاتورة' 
-        FROM invoices ORDER BY id DESC
-    """, conn)
-    conn.close()
-    
-    if all_invoices_df.empty:
+    st.subheader("📋 كشف الوارد التاريخي الشامل من السحابة")
+    if invoices_df.empty:
         st.info("لا توجد أي فواتير واردة مسجلة حالياً.")
     else:
-        st.dataframe(all_invoices_df, use_container_width=True)
+        st.dataframe(invoices_df, use_container_width=True)
 
 # ==================== 2️⃣ صفحة تسجيل الفواتير والمشاركة ====================
 with tabs[1]:
@@ -150,26 +105,29 @@ with tabs[1]:
     with col_inv2:
         if st.session_state.invoice_items:
             df_temp = pd.DataFrame(st.session_state.invoice_items)
-            df_temp.columns = ["رقم الفاتورة", "التاريخ", "اسم الصنف", "الكمية", "سعر الشراء", "الإجمالي"]
             st.dataframe(df_temp, use_container_width=True)
             
-            if st.button("💾 حفظ الفاتورة نهائياً وتحديث كميات المخزن"):
-                conn = sqlite3.connect(DB_NAME)
-                c = conn.cursor()
+            if st.button("💾 حفظ الفاتورة نهائياً على جوجل شيت وتحديث المخزن"):
+                # تحديث جدول الفواتير
+                new_invoices = pd.DataFrame(st.session_state.invoice_items)
+                updated_invoices = pd.concat([invoices_df, new_invoices], ignore_index=True)
+                save_sheet_data(updated_invoices, "invoices")
+                
+                # تحديث المخزن الحالي
                 for item in st.session_state.invoice_items:
-                    c.execute("INSERT INTO invoices (invoice_num, product_name, qty_added, cost_price, total_cost, invoice_date) VALUES (?,?,?,?,?,?)",
-                              (item['invoice_num'], item['product_name'], item['qty'], item['cost'], item['total'], item['invoice_date']))
-                    c.execute("SELECT stock_qty FROM inventory WHERE product_name = ?", (item['product_name'],))
-                    row = c.fetchone()
-                    if row:
-                        c.execute("UPDATE inventory SET stock_qty = ?, cost_price = ? WHERE product_name = ?", (row[0] + item['qty'], item['cost'], item['product_name']))
+                    idx_match = inventory_df[inventory_df['product_name'] == item['product_name']].index
+                    if not idx_match.empty:
+                        inventory_df.at[idx_match[0], 'stock_qty'] = int(inventory_df.at[idx_match[0], 'stock_qty']) + int(item['qty'])
+                        inventory_df.at[idx_match[0], 'cost_price'] = item['cost']
                     else:
-                        c.execute("INSERT INTO inventory (product_name, stock_qty, cost_price) VALUES (?, ?, ?)", (item['product_name'], item['qty'], item['cost']))
-                conn.commit()
-                conn.close()
+                        new_id = len(inventory_df) + 1
+                        new_row = pd.DataFrame([{"id": new_id, "product_name": item['product_name'], "stock_qty": item['qty'], "cost_price": item['cost']}])
+                        inventory_df = pd.concat([inventory_df, new_row], ignore_index=True)
+                        
+                save_sheet_data(inventory_df, "inventory")
                 st.session_state.last_saved_invoice = st.session_state.invoice_items.copy()
                 st.session_state.invoice_items = []
-                st.success("🎯 تم الحفظ بنجاح وتحديث المخزن!")
+                st.success("🎯 تم الحفظ السحابي بنجاح وتحديث المخزن!")
                 st.rerun()
         
         if "last_saved_invoice" in st.session_state and st.session_state.last_saved_invoice:
@@ -178,66 +136,54 @@ with tabs[1]:
             msg = "📋 *فاتورة شراء واردة جديدة*\n"
             for x in st.session_state.last_saved_invoice:
                 msg += f"▪️ {x['product_name']} | كمية: {x['qty']} | سعر: {x['cost']} ج.م\n"
-            
             encoded_msg = urllib.parse.quote(msg)
             whatsapp_url = f"https://wa.me/?text={encoded_msg}"
             st.markdown(f'<a href="{whatsapp_url}" target="_blank"><button style="background-color: #25D366; color: white; width:100%; font-weight:bold; border:none; padding:10px; border-radius:8px; cursor:pointer;">🟢 إرسال تفاصيل الفاتورة عبر واتساب</button></a>', unsafe_allow_html=True)
 
 # ==================== 3️⃣ صفحة الأموال الواردة ====================
 with tabs[2]:
-    st.subheader("💵 سجل المبالغ والأموال الواردة (الكاش الفعلي)")
+    st.subheader("💵 سجل المبالغ والأموال الواردة السحابي")
     col_f1, col_f2 = st.columns([1, 2])
     with col_f1:
-        st.markdown("### 📥 تسجيل مبلغ وارد")
         f_amount = st.number_input("قيمة المبلغ التوريدي (ج.م)", min_value=0.0, step=50.0)
         f_source = st.text_input("البيان / مصدر التوريد")
         f_date = st.date_input("تاريخ ورود المبلغ").strftime("%Y-%m-%d")
-        if st.button("تسجيل وتجميع المبلغ"):
+        if st.button("تسجيل وتجميع المبلغ في السحابة"):
             if f_amount > 0:
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO incoming_funds (amount, source_details, fund_date) VALUES (?, ?, ?)", (f_amount, f_source, f_date))
-                conn.commit()
-                conn.close()
-                st.success("تم قيد المبلغ بنجاح.")
+                new_id = len(funds_df) + 1
+                new_fund = pd.DataFrame([{"id": new_id, "amount": f_amount, "source_details": f_source, "fund_date": f_date}])
+                funds_df = pd.concat([funds_df, new_fund], ignore_index=True)
+                save_sheet_data(funds_df, "incoming_funds")
+                st.success("تم قيد المبلغ سحابياً بنجاح.")
                 st.rerun()
     with col_f2:
-        conn = sqlite3.connect(DB_NAME)
-        funds_df = pd.read_sql_query("SELECT id AS 'كود', amount AS 'المبلغ', source_details AS 'البيان', fund_date AS 'التاريخ' FROM incoming_funds", conn)
-        total_incoming_cash = conn.execute("SELECT SUM(amount) FROM incoming_funds").fetchone()[0] or 0.0
-        conn.close()
-        st.markdown(f"### 💰 إجمالي الكاش الفعلي المتجمع للفترة الحالية: `{total_incoming_cash:,.2f} ج.م`")
+        total_incoming_cash = pd.to_numeric(funds_df['amount']).sum() if not funds_df.empty else 0.0
+        st.markdown(f"### 💰 إجمالي الكاش الفعلي المتجمع حالياً: `{total_incoming_cash:,.2f} ج.م`")
         st.dataframe(funds_df, use_container_width=True)
 
 # ==================== 4️⃣ صفحة الآواجل الخارجية ====================
 with tabs[3]:
     st.subheader("📑 حساب الآواجل الخارجية والديون المستحقة عند العملاء")
-    st.write("أدخل الديون الخاصة بالعملاء من بداية فترة الشراء والعمل، والآجل القائم في نهاية فترة العمل ليقوم النظام باحتساب الفارق التلقائي ودبجه في الجرد.")
-    
     col_c1, col_c2 = st.columns([1, 2])
     with col_c1:
-        st.markdown("### ➕ قيد حساب آجل لعميل")
         c_name = st.text_input("اسم العميل أو الحساب").strip()
         c_init = st.number_input("الآجل في بداية فترة العمل (ج.م)", min_value=0.0, step=50.0)
         c_final = st.number_input("الآجل في نهاية فترة العمل (ج.م)", min_value=0.0, step=50.0)
         c_date = st.date_input("التاريخ المسجل لحساب العميل").strftime("%Y-%m-%d")
-        if st.button("حفظ حساب العميل"):
+        if st.button("حفظ حساب العميل سحابياً"):
             if c_name:
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO credit_accounts (customer_name, initial_credit, final_credit, record_date) VALUES (?, ?, ?, ?)", (c_name, c_init, c_final, c_date))
-                conn.commit()
-                conn.close()
-                st.success("تم قيد بيانات العميل.")
+                new_id = len(credits_df) + 1
+                new_credit = pd.DataFrame([{"id": new_id, "customer_name": c_name, "initial_credit": c_init, "final_credit": c_final, "record_date": c_date}])
+                credits_df = pd.concat([credits_df, new_credit], ignore_index=True)
+                save_sheet_data(credits_df, "credit_accounts")
+                st.success("تم قيد بيانات العميل سحابياً.")
                 st.rerun()
     with col_c2:
-        conn = sqlite3.connect(DB_NAME)
-        credits_df = pd.read_sql_query("SELECT id AS 'كود العميل', customer_name AS 'اسم العميل', initial_credit AS 'الآجل بالبداية', final_credit AS 'الآجل بالنهاية', (initial_credit - final_credit) AS 'فارق الآجل المستحق', record_date AS 'التاريخ' FROM credit_accounts", conn)
-        total_init_credit = conn.execute("SELECT SUM(initial_credit) FROM credit_accounts").fetchone()[0] or 0.0
-        total_final_credit = conn.execute("SELECT SUM(final_credit) FROM credit_accounts").fetchone()[0] or 0.0
-        conn.close()
-        
-        credit_diff_total = total_init_credit - total_final_credit
-        st.markdown(f"📊 إجمالي آجل البداية: `{total_init_credit:,.2f}` | إجمالي آجل النهاية: `{total_final_credit:,.2f}`")
-        st.markdown(f"➡️ **صافي فارق الآواجل المحتسب لعملية الجرد:** `{credit_diff_total:,.2f} ج.م`")
+        t_init_c = pd.to_numeric(credits_df['initial_credit']).sum() if not credits_df.empty else 0.0
+        t_final_c = pd.to_numeric(credits_df['final_credit']).sum() if not credits_df.empty else 0.0
+        net_credit_diff = t_init_c - t_final_c
+        st.markdown(f"📊 آجل البداية: `{t_init_c:,.2f}` | آجل النهاية: `{t_final_c:,.2f}`")
+        st.markdown(f"➡️ **صافي فارق الآواجل لعملية الجرد:** `{net_credit_diff:,.2f} ج.م`")
         st.dataframe(credits_df, use_container_width=True)
 
 # ==================== 5️⃣ كشف المسحوبات والمصروفات ====================
@@ -248,162 +194,136 @@ with tabs[4]:
         exp_amount = st.number_input("قيمة مبلغ المصروف (ج.م)", min_value=0.0, step=10.0)
         exp_notes = st.text_input("سبب الصرف / البيان")
         exp_date = st.date_input("تاريخ الصرف الحركي").strftime("%Y-%m-%d")
-        if st.button("قيد بند المصروف"):
+        if st.button("قيد بند المصروف سحابياً"):
             if exp_amount > 0:
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO expenses (amount, notes, expense_date) VALUES (?, ?, ?)", (exp_amount, exp_notes, exp_date))
-                conn.commit()
-                conn.close()
-                st.success("تم قيد المصروف.")
+                new_id = len(expenses_df) + 1
+                new_exp = pd.DataFrame([{"id": new_id, "amount": exp_amount, "notes": exp_notes, "expense_date": exp_date}])
+                expenses_df = pd.concat([expenses_df, new_exp], ignore_index=True)
+                save_sheet_data(expenses_df, "expenses")
+                st.success("تم قيد المصروف في حساب جوجل.")
                 st.rerun()
     with col_exp2:
-        conn = sqlite3.connect(DB_NAME)
-        expenses_df = pd.read_sql_query("SELECT id AS 'كود', amount AS 'المبلغ', notes AS 'البيان', expense_date AS 'التاريخ' FROM expenses", conn)
-        total_exp = conn.execute("SELECT SUM(amount) FROM expenses").fetchone()[0] or 0.0
-        conn.close()
+        total_exp = pd.to_numeric(expenses_df['amount']).sum() if not expenses_df.empty else 0.0
         st.markdown(f"### إجمالي النفقات الجارية الحالية: `{total_exp:,.2f} ج.م`")
         st.dataframe(expenses_df, use_container_width=True)
 
 # ==================== 6️⃣ صفحة الجرد المستقلة الدورية ====================
 with tabs[5]:
     st.subheader("🧮 شاشة معالجة الجرد الختامي الدوري واحتساب الأرباح الحقيقية")
-    
-    conn = sqlite3.connect(DB_NAME)
-    inv_data = pd.read_sql_query("SELECT id, product_name, stock_qty, cost_price FROM inventory", conn)
-    total_cash_auto = conn.execute("SELECT SUM(amount) FROM incoming_funds").fetchone()[0] or 0.0
-    t_init_c = conn.execute("SELECT SUM(initial_credit) FROM credit_accounts").fetchone()[0] or 0.0
-    t_final_c = conn.execute("SELECT SUM(final_credit) FROM credit_accounts").fetchone()[0] or 0.0
-    total_exp_current = conn.execute("SELECT SUM(amount) FROM expenses").fetchone()[0] or 0.0
-    conn.close()
-    
+    total_cash_auto = pd.to_numeric(funds_df['amount']).sum() if not funds_df.empty else 0.0
+    t_init_c = pd.to_numeric(credits_df['initial_credit']).sum() if not credits_df.empty else 0.0
+    t_final_c = pd.to_numeric(credits_df['final_credit']).sum() if not credits_df.empty else 0.0
     net_credit_diff = t_init_c - t_final_c
+    total_exp_current = pd.to_numeric(expenses_df['amount']).sum() if not expenses_df.empty else 0.0
     
-    st.info(f"💡 المحاسب الآلي سحب المخرجات الحالية: الكاش الفعلي المتجمع = {total_cash_auto:,.2f} ج.م | فارق الآواجل المستحق = {net_credit_diff:,.2f} ج.م")
-    st.write("قم بإدخال كميات العد الفعلي على الرفوف بالجدول أدناه لاستخراج المكسب:")
+    st.info(f"💡 المحاسب السحابي سحب المخرجات: الكاش الفعلي المتجمع = {total_cash_auto:,.2f} ج.م | فارق الآواجل = {net_credit_diff:,.2f} ج.م")
     
-    if "audit_df_v4" not in st.session_state or len(st.session_state.audit_df_v4) != len(inv_data):
-        inv_data['الكمية المتبقية (العد الفعلي)'] = inv_data['stock_qty']
-        st.session_state.audit_df_v4 = inv_data.copy()
+    if inventory_df.empty:
+        st.warning("المخزن فارغ حالياً، يرجى تسجيل فواتير واردة أولاً.")
+    else:
+        if "audit_df_v5" not in st.session_state or len(st.session_state.audit_df_v5) != len(inventory_df):
+            inventory_df['الكمية المتبقية (العد الفعلي)'] = inventory_df['stock_qty'].astype(int)
+            st.session_state.audit_df_v5 = inventory_df.copy()
+            
+        editable_table = st.data_editor(
+            st.session_state.audit_df_v5[['id', 'product_name', 'stock_qty', 'cost_price', 'الكمية المتبقية (العد الفعلي)']],
+            use_container_width=True, disabled=['id', 'product_name', 'stock_qty', 'cost_price']
+        )
         
-    editable_table = st.data_editor(
-        st.session_state.audit_df_v4[['id', 'product_name', 'stock_qty', 'cost_price', 'الكمية المتبقية (العد الفعلي)']],
-        use_container_width=True, disabled=['id', 'product_name', 'stock_qty', 'cost_price']
-    )
-    
-    if st.button("📊 معالجة واستخراج تقرير حجم المكسب الفعلي الحقيقي"):
-        total_cost_sold = 0.0
-        log_lines = []
-        for idx, row in editable_table.iterrows():
-            qty_sold = row['stock_qty'] - row['الكمية المتبقية (العد الفعلي)']
-            item_cost_sold = qty_sold * row['cost_price']
-            total_cost_sold += item_cost_sold
-            log_lines.append(f"صنف: {row['product_name']} | المباع: {qty_sold} | تكلفة الشراء: {item_cost_sold}")
-            
-        # المعادلة الجديدة المتكاملة بناء على طلبك
-        final_real_profit = total_cash_auto + net_credit_diff - total_cost_sold
-        
-        col_res1, col_res2 = st.columns(2)
-        with col_res1:
-            st.markdown(f"""
-            <div class="report-card">
-                <h3>🏆 تقرير الأرباح وحجم المكسب الفعلي</h3>
-                <p>🔹 إجمالي الكاش الفعلي المتجمع (من صفحة الأموال الواردة): <b>{total_cash_auto:,.2f} ج.م</b></p>
-                <p>🔹 صافي فارق حساب الآواجل للعملاء: <b>{net_credit_diff:,.2f} ج.م</b></p>
-                <p>🔹 إجمالي تكلفة الشراء للبضاعة المباعة فعلياً: <b>{total_cost_sold:,.2f} ج.م</b></p>
-                <hr>
-                <h4>💵 حجم المكسب الفعلي النهائي الحقيقي: {final_real_profit:,.2f} ج.م</h4>
-            </div>
-            """, unsafe_allow_html=True)
-        with col_res2:
-            st.markdown(f"""
-            <div class="expense-card">
-                <h3>⚠️ حجم المصروفات المسجلة</h3>
-                <p>📍 إجمالي مصروفات الفترة الجارية: <b>{total_exp_current:,.2f} ج.م</b></p>
-                <small>*معروضة كبيان استرشادي منفصل بناءً على رغبتك.</small>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        st.session_state.pending_audit_v4 = {
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M"), "cost_sold": total_cost_sold,
-            "cash": total_cash_auto, "credit_diff": net_credit_diff, "expenses": total_exp_current,
-            "net": final_real_profit, "log": "\n".join(log_lines), "table": editable_table
-        }
-        
-    if "pending_audit_v4" in st.session_state:
-        if st.button("💾 اعتماد وترحيل جلسة الجرد نهائياً (تحديث المخزن وتصفير الكاش والآواجل والمصروفات)"):
-            pa = st.session_state.pending_audit_v4
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            
-            c.execute("""INSERT INTO audit_archive (audit_date, cost_of_sold, cash_counted, credit_diff, period_expenses, net_profit, log_details) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)""", 
-                      (pa['date'], pa['cost_sold'], pa['cash'], pa['credit_diff'], pa['expenses'], pa['net'], pa['log']))
-            
-            for _, r in pa['table'].iterrows():
-                c.execute("UPDATE inventory SET stock_qty = ? WHERE id = ?", (r['الكمية المتبقية (العد الفعلي)'], r['id']))
+        if st.button("📊 معالجة واستخراج تقرير حجم المكسب الفعلي الحقيقي"):
+            total_cost_sold = 0.0
+            log_lines = []
+            for idx, row in editable_table.iterrows():
+                qty_sold = int(row['stock_qty']) - int(row['الكمية المتبقية (العد الفعلي)'])
+                item_cost_sold = qty_sold * float(row['cost_price'])
+                total_cost_sold += item_cost_sold
+                log_lines.append(f"صنف: {row['product_name']} | المباع: {qty_sold} | تكلفة الشراء: {item_cost_sold}")
                 
-            # التصفير التلقائي لبدء فترة زمنية جديدة بنجاح
-            c.execute("DELETE FROM incoming_funds")
-            c.execute("DELETE FROM credit_accounts")
-            c.execute("DELETE FROM expenses")
+            final_real_profit = total_cash_auto + net_credit_diff - total_cost_sold
             
-            conn.commit()
-            conn.close()
-            del st.session_state.pending_audit_v4
-            st.success("🎯 تم ترحيل الجلسة بنجاح وتصفير الأرصدة المؤقتة لبدء فترة عمل جديدة!")
-            st.rerun()
+            col_res1, col_res2 = st.columns(2)
+            with col_res1:
+                st.markdown(f"""
+                <div class="report-card">
+                    <h3>🏆 تقرير الأرباح وحجم المكسب الفعلي الحقيقي</h3>
+                    <p>🔹 إجمالي الكاش السحابي المتجمع: <b>{total_cash_auto:,.2f} ج.م</b></p>
+                    <p>🔹 صافي فارق حساب الآواجل: <b>{net_credit_diff:,.2f} ج.م</b></p>
+                    <p>🔹 تكلفة الشراء للبضاعة المباعة: <b>{total_cost_sold:,.2f} ج.م</b></p>
+                    <hr>
+                    <h4>💵 حجم المكسب الفعلي النهائي: {final_real_profit:,.2f} ج.م</h4>
+                </div>
+                """, unsafe_allow_html=True)
+            with col_res2:
+                st.markdown(f"""
+                <div class="expense-card">
+                    <h3>⚠️ حجم المصروفات المسجلة</h3>
+                    <p>📍 إجمالي مصروفات الفترة الجارية: <b>{total_exp_current:,.2f} ج.م</b></p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            st.session_state.pending_audit_v5 = {
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"), "cost_sold": total_cost_sold,
+                "cash": total_cash_auto, "credit_diff": net_credit_diff, "expenses": total_exp_current,
+                "net": final_real_profit, "log": "\n".join(log_lines), "table": editable_table
+            }
+            
+        if "pending_audit_v5" in st.session_state:
+            if st.button("💾 ترحيل واعتماد الجلسة (تصفير الأرصدة في جوجل شيت لبدء فترة جديدة)"):
+                pa = st.session_state.pending_audit_v5
+                
+                # إضافة لأرشيف الجرد
+                new_arch_id = len(archive_df) + 1
+                new_archive_row = pd.DataFrame([{
+                    "id": new_arch_id, "audit_date": pa['date'], "cost_of_sold": pa['cost_sold'],
+                    "cash_counted": pa['cash'], "credit_diff": pa['credit_diff'], "period_expenses": pa['expenses'],
+                    "net_profit": pa['net'], "log_details": pa['log']
+                }])
+                archive_df = pd.concat([archive_df, new_archive_row], ignore_index=True)
+                save_sheet_data(archive_df, "audit_archive")
+                
+                # تحديث كميات الرفوف بالمخزن
+                for _, r in pa['table'].iterrows():
+                    idx_match = inventory_df[inventory_df['id'] == r['id']].index
+                    if not idx_match.empty:
+                        inventory_df.at[idx_match[0], 'stock_qty'] = r['الكمية المتبقية (العد الفعلي)']
+                save_sheet_data(inventory_df, "inventory")
+                
+                # تصفير الجداول المؤقتة للفترة الجديدة في جوجل شيت
+                save_sheet_data(pd.DataFrame(columns=funds_cols), "incoming_funds")
+                save_sheet_data(pd.DataFrame(columns=credits_cols), "credit_accounts")
+                save_sheet_data(pd.DataFrame(columns=expenses_cols), "expenses")
+                
+                del st.session_state.pending_audit_v5
+                st.success("🎯 تم الاعتماد والترحيل السحابي وتصفير الدورة بنجاح!")
+                st.rerun()
 
 # ==================== 7️⃣ صفحة تقارير المخزن والجرد المسبق ====================
 with tabs[6]:
     st.subheader("📊 إدارة المخزون المتقدمة وسجلات الجرد السابقة")
-    
     st.markdown("### 📦 تعديل أسعار وكميات بضاعة المستودع الحالية مباشرة")
-    st.write("يمكنك النقر مباشرة على خلايا الجدول أدناه لتعديل أسعار الشراء أو كمية الرف، ثم الضغط على زر الحفظ:")
     
-    conn = sqlite3.connect(DB_NAME)
-    stock_df = pd.read_sql_query("SELECT id, product_name AS 'اسم المنتج', stock_qty AS 'الكمية المتاحة', cost_price AS 'سعر الشراء (ج.م)' FROM inventory", conn)
-    conn.close()
-    
-    edited_stock_table = st.data_editor(stock_df, use_container_width=True, disabled=['id', 'اسم المنتج'])
-    
-    if st.button("💾 حفظ تعديلات أسعار الموديلات أو المنتجات الحالية بالمخزن"):
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        for _, row in edited_stock_table.iterrows():
-            c.execute("UPDATE inventory SET stock_qty = ?, cost_price = ? WHERE id = ?", (row['الكمية المتاحة'], row['سعر الشراء (ج.م)'], row['id']))
-        conn.commit()
-        conn.close()
-        st.success("🎯 تم تحديث وتعديل أسعار المنتجات وكمياتها بنجاح!")
-        st.rerun()
-        
+    if not inventory_df.empty:
+        edited_stock_table = st.data_editor(inventory_df, use_container_width=True, disabled=['id', 'product_name'])
+        if st.button("💾 حفظ تعديلات المخزن سحابياً فوراً"):
+            save_sheet_data(edited_stock_table, "inventory")
+            st.success("🎯 تم التعديل في جوجل شيت بنجاح!")
+            st.rerun()
+            
     st.markdown("---")
     st.markdown("### 🗄️ سجلات جميع عمليات الجرد والتقارير المعتمدة السابقة")
-    conn = sqlite3.connect(DB_NAME)
-    archive_df = pd.read_sql_query("""
-        SELECT id AS 'رقم الجلسة', audit_date AS 'تاريخ الجرد', cost_of_sold AS 'تكلفة المبيعات', 
-               cash_counted AS 'الكاش المرحل', credit_diff AS 'فارق الآواجل', 
-               period_expenses AS 'المصروفات', net_profit AS 'حجم المكسب الفعلي' 
-        FROM audit_archive ORDER BY id DESC
-    """, conn)
-    conn.close()
-    
-    if archive_df.empty:
-        st.info("لا توجد جلسات جرد سابقة معتمدة ومرحلة بعد.")
-    else:
-        st.dataframe(archive_df, use_container_width=True)
+    st.dataframe(archive_df, use_container_width=True)
 
     # التصفير العام للحماية
     st.markdown("---")
     st.markdown("### ⚙️ إدارة النظام المتقدمة")
-    confirm_reset = st.checkbox("أوافق على مسح كافة الجداول، الفواتير، الآواجل والبيانات بالكامل لبدء نشاط من الصفر.")
-    if st.button("⚠️ إعادة ضبط وتصفير قاعدة البيانات بالكامل"):
+    confirm_reset = st.checkbox("أوافق على تصفير ومسح كافة البيانات من جوجل شيت والبدء من الصفر.")
+    if st.button("⚠️ تصفير قاعدة البيانات بالكامل"):
         if confirm_reset:
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            c.execute("DROP TABLE IF EXISTS inventory"); c.execute("DROP TABLE IF EXISTS invoices")
-            c.execute("DROP TABLE IF EXISTS incoming_funds"); c.execute("DROP TABLE IF EXISTS credit_accounts")
-            c.execute("DROP TABLE IF EXISTS expenses"); c.execute("DROP TABLE IF EXISTS audit_archive")
-            conn.commit(); conn.close()
-            st.success("💥 تم تصفير المخزن بالكامل! يرجى إعادة تنشيط الصفحة.")
-            init_database()
+            save_sheet_data(pd.DataFrame(columns=inventory_cols), "inventory")
+            save_sheet_data(pd.DataFrame(columns=invoices_cols), "invoices")
+            save_sheet_data(pd.DataFrame(columns=funds_cols), "incoming_funds")
+            save_sheet_data(pd.DataFrame(columns=credits_cols), "credit_accounts")
+            save_sheet_data(pd.DataFrame(columns=expenses_cols), "expenses")
+            save_sheet_data(pd.DataFrame(columns=archive_cols), "audit_archive")
+            st.success("💥 تم تصفير كافة الجداول في جوجل شيت بنجاح!")
             st.rerun()
