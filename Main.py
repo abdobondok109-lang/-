@@ -23,11 +23,8 @@ st.markdown("""
 st.title("📦 نظام إدارة المخزن السحابي المتكامل")
 st.write("تم ربط هذا التطبيق بحساب جوجل شيت لضمان عدم ضياع أي بيانات عند الاستخدام من الهاتف.")
 
-# إنشاء الاتصال بجوجل شيت مباشرة
-conn = st.connection(
-    "gsheets", type=GSheetsConnection, 
-    spreadsheet="https://docs.google.com/spreadsheets/d/1TT7RoPmrm9800bYwy_F6S7dS12anECum3bRRsrB9H7c/edit?usp=drivesdk"
-)
+# الاتصال المباشر بالجدول وقراءته فوراً
+conn = "https://docs.google.com/spreadsheets/d/1TT7RoPmrm9800bYwy_F6S7dS12anECum3bRRsrB9H7c/export?format=csv"
 
 def load_sheet_data(worksheet_name, columns):
     try:
